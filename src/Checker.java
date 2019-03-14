@@ -5,15 +5,22 @@
  * and correction is not possible.
  *
  * Considerations and generalizations: Only one word would given to check for each method call to checkWord.
- * Incorrect capitalization can occur anywhere in the given String.
+ * Incorrect capitalization can occur anywhere in the given String. Program will only correct capitalization if given mis-capitalized
+ * word is in dictionary. Otherwise, program will return the closest word using the Levenshtein Distance algorithm. 
  *
+ * External libraries: http://commons.apache.org/proper/commons-text/download_text.cgi
+ * Other code repositories: https://coursework.cs.duke.edu/kiori.tanaka
  */
 
 import java.io.*;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
+
+/**
+ * Apache Commons library downloaded in order to determine similarity between two words when correcting duplicate
+ * words.
+ */
+import org.apache.commons.text.similarity.LevenshteinDistance;
 
 public class Checker {
 
@@ -25,64 +32,33 @@ public class Checker {
     /**
      * Error message for when word is not found
      */
-
     private static final String ERROR_MSG = "No Correction Found.";
 
-    public Checker() {
-        myDict = getDataFile();
+    public Checker(String dictFile) {
+        myDict = getDataFile(dictFile);
     }
 
-    public static void unzipFile(String zipName) {
+    /**
+     *
+     * @param fileName String for file name that contains all the dictionary words in it
+     * @return HashMap with dictionary words as keys and dictionary words length as values
+     */
+
+    public static HashMap<String, Integer> getDataFile(String fileName) {
+        HashMap<String, Integer> dictMap = new HashMap<>();
         ClassLoader classLoader = Checker.class.getClassLoader();
-        String path = classLoader.getResource(zipName).getPath();
-
-        try (FileInputStream fis = new FileInputStream(path);
-             ZipInputStream zis =
-                     new ZipInputStream(new BufferedInputStream(fis))) {
-
-            ZipEntry entry;
-
-            // Read each entry from the ZipInputStream until no
-            // more entry found indicated by a null return value
-            // of the getNextEntry() method.
-            while ((entry = zis.getNextEntry()) != null) {
-                System.out.println("Unzipping: " + entry.getName());
-
-                int size;
-                byte[] buffer = new byte[2048];
-
-                try (FileOutputStream fos =
-                             new FileOutputStream(entry.getName());
-                     BufferedOutputStream bos =
-                             new BufferedOutputStream(fos, buffer.length)) {
-
-                    while ((size = zis.read(buffer, 0, buffer.length)) != -1) {
-                        bos.write(buffer, 0, size);
-                    }
-                    bos.flush();
-                }
-            }
-        } catch (IOException e) {
-            System.out.println("error");
-            e.printStackTrace();
-        }
-    }
-
-    public static HashMap<String, Integer> getDataFile() {
-        HashMap<String, Integer> hset = new HashMap<>();
-        ClassLoader classLoader = Checker.class.getClassLoader();
-        String path = classLoader.getResource("words").getPath();
-        File file = new File(path);
+        String pathToDictFile = classLoader.getResource(fileName).getPath();
+        File file = new File(pathToDictFile);
         try {
             BufferedReader br = new BufferedReader(new FileReader(file));
             String st;
             while ((st = br.readLine()) != null)
-                hset.putIfAbsent(st, st.length());
+                dictMap.putIfAbsent(st, st.length());
         }
         catch (Exception e) {
             e.printStackTrace();
         }
-        return hset;
+        return dictMap;
     }
 
     /**
@@ -92,32 +68,71 @@ public class Checker {
      */
 
     public static String checkWord(String wordToCheck) {
-        // correct
+        if (wordToCheck.equals("") || wordToCheck == null) {
+            throw new NullPointerException("No word given!");
+        }
+
+        // Word is correct
         if (myDict.containsKey(wordToCheck)) {
             return wordToCheck;
         }
-        // capitalization error
-        for (Map.Entry<String, Integer> entry : myDict.entrySet()) {
-            if (entry.getKey().toLowerCase().equals(wordToCheck.toLowerCase())){
-                return entry.getKey();
+
+        // Checking for capitalization error
+        for (Map.Entry<String, Integer> dictEntry : myDict.entrySet()) {
+            if (dictEntry.getKey().toLowerCase().equals(wordToCheck.toLowerCase())) {
+                return dictEntry.getKey();
             }
         }
-        // check all of the words that have the same length when double is removed
-        HashMap <Character, Integer> letterCountMap = letterOccurrence(wordToCheck);
-        for (Map.Entry<String, Integer> entry : myDict.entrySet()) {
-            if (entry.getKey().length() < wordToCheck.length()) {
-                HashMap compareMap = letterOccurrence(entry.getKey()); //comparing with each word
-                for (Map.Entry<Character, Integer> letterCountEntry : letterCountMap.entrySet()) {
-                    if (compareMap.containsKey(letterCountEntry.getKey())) {
-                        // if it contains the letter, check if the value is the same int
-                        if ((int)compareMap.get(letterCountEntry.getKey()) < letterCountEntry.getValue()) {
-                            return entry.getKey();
+
+        // Create a HashMap that has letter occurrence of the wordToCheck
+        HashMap<Character, Integer> givenWordLetterMap = letterOccurrence(wordToCheck);
+        HashMap<String, Integer> possibleWords = new HashMap<>();
+
+        // Checking one dictionary word
+        for (Map.Entry<String, Integer> dictEntry : myDict.entrySet()) {
+            String dictWord = dictEntry.getKey();
+
+            // Checking only if the word has less letters than original to narrow down because givenWord with repeating letters will have more letters than the dict word we are considering
+            if (dictWord.length() < wordToCheck.length()) {
+
+                // Create a temporary Hashmap of letter occurrence in individual dictionary words
+                HashMap<Character, Integer> dictWordLetterMap = letterOccurrence(dictWord);
+
+                // Iterating through the letters of given word to compare and updating possible words
+                if (dictWordLetterMap.keySet().equals(givenWordLetterMap.keySet())) {
+                    boolean flag;
+
+                    // Checking that each letter occurs more times in the dictionary word
+                    for (Map.Entry<Character, Integer> givenWordEntry : givenWordLetterMap.entrySet()) {
+                        if (givenWordEntry.getValue() > dictWordLetterMap.get(givenWordEntry.getKey())) {
+                            flag = false;
                         }
+                    }
+
+                    // Using the Apache Commons Levenshtein Distance algorithm to record similarity degree for dictionary word and given word
+                    if (flag = true) {
+                        possibleWords.putIfAbsent(dictWord, LevenshteinDistance.getDefaultInstance().apply(dictWord, wordToCheck));
                     }
                 }
             }
         }
-        return ERROR_MSG;
+
+        if (possibleWords == null) {
+            return ERROR_MSG;
+        }
+
+        else {
+            // Narrowing the closest word to wordToCheck
+            Map.Entry<String, Integer> nearestEntry = null;
+            for (Map.Entry<String, Integer> possibleWordsEntry : possibleWords.entrySet()) {
+                if (nearestEntry == null || nearestEntry.getValue() > possibleWordsEntry.getValue()) {
+                    {
+                        nearestEntry = possibleWordsEntry;
+                    }
+                }
+            }
+            return nearestEntry.getKey();
+        }
     }
 
     /**
@@ -141,10 +156,14 @@ public class Checker {
 
 
     public static void main(String[] args) throws Exception {
-        HashMap data = getDataFile();
-        Checker checker = new Checker();
+        // Testing purposes
+
+        Checker checker = new Checker("words");
         System.out.println(checkWord("aani"));
-        System.out.println(checkWord("hello"));
+        System.out.println(checkWord("aaardvark"));
+        System.out.println(checkWord("hellooo"));
+        System.out.println(checkWord("hhelloo"));
+        System.out.println(checkWord(""));
     }
 
 }
